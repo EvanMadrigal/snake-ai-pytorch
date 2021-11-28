@@ -3,144 +3,162 @@ import random
 import numpy as np
 from collections import deque
 from game import SnakeGameAI, Direction, Point
-from model import Linear_QNet, QTrainer
+from model import Linear_QNet, qLearning
 from helper import plot
 
+#Constant parameters
 MAX_MEMORY = 100_000
 BATCH_SIZE = 1000
+#The learning rate
 LR = 0.001
 
 class Agent:
 
     def __init__(self):
-        self.n_games = 0
-        self.epsilon = 0 # randomness
-        self.gamma = 0.9 # discount rate
-        self.memory = deque(maxlen=MAX_MEMORY) # popleft()
+        self.num_games = 0
+        #We use epsilon to demonstrate the randomness
+        self.epsilon = 0
+        #Set the initial discount ot .9 or anything less than 1
+        self.gamma = 0.9 
+        #manages the memory of and pops off if overloaded
+        self.memory = deque(maxlen=MAX_MEMORY)
+        #Creating an instance of the trainer (States, ,Actions)
         self.model = Linear_QNet(11, 256, 3)
-        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
+        self.trainer = qLearning(self.model, lr=LR, gamma=self.gamma)
 
-
+    # Here we are able to store the 11 values 
     def get_state(self, game):
         head = game.snake[0]
+        #Points around the head
         point_l = Point(head.x - 20, head.y)
         point_r = Point(head.x + 20, head.y)
         point_u = Point(head.x, head.y - 20)
         point_d = Point(head.x, head.y + 20)
         
+        #boolean values for the game directions
         dir_l = game.direction == Direction.LEFT
         dir_r = game.direction == Direction.RIGHT
         dir_u = game.direction == Direction.UP
         dir_d = game.direction == Direction.DOWN
 
         state = [
-            # Danger straight
+            # The Different dirrections of danger + 3
+            # Danger/collision straight
             (dir_r and game.is_collision(point_r)) or 
             (dir_l and game.is_collision(point_l)) or 
             (dir_u and game.is_collision(point_u)) or 
             (dir_d and game.is_collision(point_d)),
 
-            # Danger right
+            # Danger/collision right
             (dir_u and game.is_collision(point_r)) or 
             (dir_d and game.is_collision(point_l)) or 
             (dir_l and game.is_collision(point_u)) or 
             (dir_r and game.is_collision(point_d)),
 
-            # Danger left
+            # Danger/collision left
             (dir_d and game.is_collision(point_r)) or 
             (dir_u and game.is_collision(point_l)) or 
             (dir_r and game.is_collision(point_u)) or 
             (dir_l and game.is_collision(point_d)),
             
-            # Move direction
+            # Bool values where 1 is true while rest is falseSnake Directions + 4
             dir_l,
             dir_r,
             dir_u,
             dir_d,
             
-            # Food location 
+            # Locates food + 4
             game.food.x < game.head.x,  # food left
             game.food.x > game.head.x,  # food right
             game.food.y < game.head.y,  # food up
             game.food.y > game.head.y  # food down
             ]
 
+        #Sets bools to 0's and 1's
         return np.array(state, dtype=int)
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done)) # popleft if MAX_MEMORY is reached
+    #Remember streoes the current state, reward, and calculates next state as well as game over state
+    def remember(self, state, action, reward, next_state, over):
+        #Appends to its memory to rember
+        self.memory.append((state, action, reward, next_state, over))
 
-    def train_long_memory(self):
+    def long_memory(self):
         if len(self.memory) > BATCH_SIZE:
-            mini_sample = random.sample(self.memory, BATCH_SIZE) # list of tuples
+            small_sample = random.sample(self.memory, BATCH_SIZE) # list of tuples
         else:
-            mini_sample = self.memory
+            small_sample = self.memory
 
-        states, actions, rewards, next_states, dones = zip(*mini_sample)
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
-        #for state, action, reward, nexrt_state, done in mini_sample:
-        #    self.trainer.train_step(state, action, reward, next_state, done)
+        states, actions, rewards, next_states, overs = zip(*small_sample)
+        self.trainer.train_step(states, actions, rewards, next_states, overs)
 
-    def train_short_memory(self, state, action, reward, next_state, done):
-        self.trainer.train_step(state, action, reward, next_state, done)
+    #Trains for only game step
+    def short_memory(self, state, action, reward, next_state, over):
+        self.trainer.train_step(state, action, reward, next_state, over)
 
     def get_action(self, state):
-        # random moves: tradeoff exploration / exploitation
-        self.epsilon = 80 - self.n_games
-        final_move = [0,0,0]
+        # This is where the gent does random moves for the actions
+        self.epsilon = 80 - self.num_games
+        last_move = [0,0,0]
         if random.randint(0, 200) < self.epsilon:
             move = random.randint(0, 2)
-            final_move[move] = 1
+            last_move[move] = 1
         else:
-            state0 = torch.tensor(state, dtype=torch.float)
-            prediction = self.model(state0)
-            move = torch.argmax(prediction).item()
-            final_move[move] = 1
+            stateZ = torch.tensor(state, dtype=torch.float)
+            pred = self.model(stateZ)
+            move = torch.argmax(pred).item()
+            last_move[move] = 1
 
-        return final_move
+        return last_move
 
 
 def train():
-    plot_scores = []
-    plot_mean_scores = []
+    #Saves array values of training scores and avg scores, these are used to plot later
+    train_scores = []
+    avg_scores = []
+
     total_score = 0
     record = 0
     agent = Agent()
     game = SnakeGameAI()
+    #Here we want to play the game, this is done till the script is over
     while True:
-        # get old state
-        state_old = agent.get_state(game)
+        # This gets the old state
+        old_state = agent.get_state(game)
 
-        # get move
-        final_move = agent.get_action(state_old)
+        # We want to get the move based on the current state
+        last_move = agent.get_action(old_state)
 
-        # perform move and get new state
-        reward, done, score = game.play_step(final_move)
-        state_new = agent.get_state(game)
+        # This will then perform the action/move and get the state and get reward
+        reward, over, score = game.play_step(last_move)
+        new_state = agent.get_state(game)
 
-        # train short memory
-        agent.train_short_memory(state_old, final_move, reward, state_new, done)
+        # We use the training of the short memeory
+        agent.short_memory(old_state, last_move, reward, new_state, over)
 
-        # remember
-        agent.remember(state_old, final_move, reward, state_new, done)
+        #This will then rember the short memory given
+        agent.remember(old_state, last_move, reward, new_state, over)
 
-        if done:
-            # train long memory, plot result
+        #This then checks if the game is over 
+        if over:
+            # Here we are able to reset the game whcih is set up in the game.py file
             game.reset()
-            agent.n_games += 1
-            agent.train_long_memory()
+            #We can then itereate the number of games played +1
+            agent.num_games += 1
+            agent.long_memory()
 
+            #Checks the highscore
             if score > record:
                 record = score
                 agent.model.save()
 
-            print('Game', agent.n_games, 'Score', score, 'Record:', record)
+            #Displayes player information
+            print('Game', agent.num_games, 'Score', score, 'Record:', record)
 
-            plot_scores.append(score)
+            train_scores.append(score)
             total_score += score
-            mean_score = total_score / agent.n_games
-            plot_mean_scores.append(mean_score)
-            plot(plot_scores, plot_mean_scores)
+            mean_score = total_score / agent.num_games
+            avg_scores.append(mean_score)
+            plot(train_scores, avg_scores)
 
 
 if __name__ == '__main__':
